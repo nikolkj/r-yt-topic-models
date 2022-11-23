@@ -138,10 +138,14 @@ for(i in seq_along(data$url)){
   .text = .temp %>% 
     # grab text
     html_nodes("text") %>% 
-    html_text() %>% 
-    # clean-up
-    str_remove_all(string = ., pattern = "&#\\d+;") %>% # HTML characters, eg. &#39;
-    str_replace_all(string = ., pattern = "\\n", " ")
+    html_text() 
+    # clean-up HTML characters, eg. &#39; 
+    # ... leave to data analysis portion, reference code below.
+    # str_remove_all(string = ., pattern = "&#\\d+;", " ") %>% 
+    # str_remove_all(string = ., pattern = "&gt;|&lt;|&amp;", " ") %>%
+    # str_remove_all(string = ., pattern = "<[^>]*>", " ") %>%
+    # str_remove_all(string = ., pattern = "<[^>]*>", " ") %>%
+    # str_replace_all(string = ., pattern = "\\n", " ")
   
   .data = .temp %>% 
     # grab time-stamps
