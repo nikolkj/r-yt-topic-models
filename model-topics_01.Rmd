@@ -124,7 +124,7 @@ clust.which
 
 ```{r}
 # Classify well punctuated based on dbscan and hard-cut off @ 30 punct'd lines
-punct_summary = punct_summary %>% 
+punct_summary = punct_summary %>% # TODO save
   mutate(k = clust$cluster) %>% 
   mutate(.punctd = (puncts >= 30 & k == clust.which$k[1])) %>% 
   select(everything(), .punctd)
@@ -135,159 +135,70 @@ punct_summary %>% count(.punctd)
 Since the minority of transcripts are well punctuated, we will keep all transcripts in the corpus; however, downstream snippet creation will only be available for those. 
 
 ```{r}
-data = transcripts %>% 
-  select(ref, text) %>% 
+data = transcripts %>% # TODO save
+  select(ref, text) %>%
   ## do not use, need to preserve punctuation 
   # tidytext::unnest_tokens(tbl = ., output = "word", to_lower = FALSE, input = text, token = "words") %>%
-  mutate(word = str_split(text, "//s+"))
-
-
-data
-```
-
-```{r}
-transcripts %>%
-  filter(ref == "-2enQV3Dfng")
-```
-
-
-```{r}
-# clean-up text transacripts
-transcripts = transcripts %>%
-  mutate() %>% # e.g. "[music]"
-  mutate(
-      clean_text = str_replace_all(text, "\\[[^>]*]", " "),
-      clean_text = str_replace_all(string = text, pattern = "&#\\d+;", " "),
-      clean_text = str_replace_all(string = text, pattern = "&gt;|&lt;|&amp;", " "),
-      clean_text = str_replace_all(string = text, pattern = "<[^>]*>", " "),
-      clean_text = str_replace_all(string = text, pattern = "(\\n)|(\\r)", " "),
-      clean_text = str_replace_all(string = text, pattern = "[[:punct:]]", " "),
-      clean_text = str_squish(text)
-  ) %>% 
-  filter(clean_text != "")
-
-```
-
-
-
-```{r echo=FALSE}
-transcripts %>% 
-  sample_n(10) %>% 
-  kable(caption = "Preview: Transcripts Dataset") %>% 
-  kable_paper()
-```
-```{r}
-# Collapse 1-to-1 reference to text 
-data = transcripts %>% 
-  select(ref, text) %>% 
+  mutate(word = str_split(text, "\\s+")) %>% 
+  select(-text) %>% 
+  unnest(data = ., cols = c(word)) %>% 
+  # index words 
   group_by(ref) %>% 
-  summarise(text = paste(text, collapse = " "), .groups = "drop") %>% 
-  mutate(text = tolower(text))
+  mutate(word_index = row_number()) %>% 
+  ungroup() %>% 
+  # pre-processing: lower case tokens w/o punct, stemmed
+  mutate(token = str_remove_all(string = tolower(word), "[[:punct:]]"),
+         token =  SnowballC::wordStem(words = token, language = "english")) %>% 
+  # flag stop-words, excluded from model corpus
+  mutate(stop_word = token %in% stopwords::data_stopwords_smart$en) %>% 
+  mutate(stop_word = ifelse(str_detect(token, "^(h*)uh"), TRUE, stop_word),
+         stop_word = ifelse(str_detect(token, "(m*)h(m+)"), TRUE, stop_word)) %>%
+  mutate(stop_word = ifelse(str_detect(token, "\\d+"), TRUE, stop_word)) %>% 
+  mutate(stop_word = ifelse(token == "", TRUE, stop_word)) 
+```
 
-# Remove short transcripts
-data = data %>% 
-  mutate(words = str_count(string = text, pattern = " "))
+```{r}
+token_prevelence = data %>% 
+  filter(!stop_word) %>%
+  count(token)
 
-data %>% 
-  select(ref, words) %>% 
-  ggplot(data = ., aes(words)) + 
+.ecdf = ecdf(token_prevelence$n)
+token_prevelence$ecdf = .ecdf(token_prevelence$n)
+token_prevelence$high_prev = (token_prevelence$n >= 10)
+
+token_prevelence %>% 
+  ggplot(., aes(n)) +
   stat_ecdf() +
-  geom_vline(xintercept = 2500)
+  scale_x_log10() +
+  geom_vline(xintercept = 10, linetype = 2) +
+  geom_hline(yintercept = .ecdf(10), linetype = 2)
 ```
-
 ```{r}
-# Remove short transcripts
 data = data %>% 
-  filter(words > 2500) %>%
-  select(-words)
-```
-
-
-```{r}
-tidy_data = data %>% 
-  # tidytext::unnest_ngrams(tbl = ., output = token, input = text, n = 2) %>% 
-  tidytext::unnest_tokens(output = word, input = text) %>%
-  filter(nchar(word) > 2) %>% 
-  filter(!str_detect(word, "\\d")) %>% 
-  filter(word %nin% filter(tidytext::stop_words, lexicon == "snowball")$word) %>%  
-  mutate(token = SnowballC::wordStem(words = word, language = "english"))
+  mutate(high_prevance = token %in% filter(.data = token_prevelence, high_prev)$token)
 ```
 
 ```{r}
-# Record stems for reverse mapping downstream
-word_stems = tidy_data %>% 
-  count(token, word)
-
-# preview common stems 
-word_stems %>% 
-  count(token, sort = T) %>% 
-  head()
-
+data %>% 
+  filter(ref == "-2enQV3Dfng") %>% 
+  filter(word_index %in% seq(1000,1200)) %$% 
+  # head(200) %$%
+  paste(word, collapse = " ") %>% 
+  cat()
 ```
-
 ```{r}
-tidy_data = tidy_data %>% 
-  count(ref,token) 
+data %>% 
+  filter(ref == "-2enQV3Dfng") %>% 
+  filter(word_index %in% seq(1000,1200)) %>% 
+  filter(!stop_word & high_prevance) %$% 
+  paste(token, collapse = " ") %>% 
+  cat()
 ```
-
-
-```{r}
-tidy_data %>% 
-  filter(n > 5) %>% 
-  sample_n(10) %>% 
-  kable(x = ., caption = "Preview: Tidy Data") %>% 
-  kable_paper()
-```
-
-```{r}
-tidy_tfidf = tidy_data %>% 
-  tidytext::bind_tf_idf(tbl = ., term = token, document = ref, n = n)
-```
-
-```{r warning=FALSE}
-.temp = tidy_tfidf %>% 
-  group_by(ref) %>% 
-  slice_max(.data = ., order_by = tf_idf) %>% 
-  summarise(sum_tf_idf = sum(tf_idf)) %>% 
-  arrange(desc(sum_tf_idf)) %>% 
-  left_join(x = ., y = select(.data = titles, ref, title),
-            by = "ref") %>% 
-  slice_max(.data = ., order_by = sum_tf_idf, n = 6)
-
-.temp2 = tidy_tfidf %>% 
-  filter(ref %in% .temp$ref) %>% 
-  # count(ref)
-  group_by(ref) %>% 
-  arrange(-tf_idf) %>% 
-  top_n(n = 10) %>% 
-  left_join(x = ., y = select(.data = titles, ref, title),
-            by = "ref")
-
-.temp2 %>% 
-  arrange(title, -tf_idf) %>% 
-  mutate(token = factor(token, levels = rev(unique(token)))) %>% 
-  ggplot(., aes(tf_idf, reorder(token, tf_idf), fill = title, alpha = tf_idf)) +
-        ggstance::geom_barh(stat = "identity", show.legend = FALSE) +
-        labs(title = "Highest tf-idf words in Unique YouTube Videos",
-             y = NULL, x = "tf-idf") +
-        facet_wrap(~title, ncol = 2, scales = "free") +
-        ggthemes::theme_tufte(base_family = "Arial", base_size = 13, ticks = FALSE) +
-        scale_alpha_continuous(range = c(0.6, 1)) +
-        scale_x_continuous(expand=c(0,0)) +
-        viridis::scale_fill_viridis(end = 0.85, discrete=TRUE) +
-        theme(strip.text=element_text(hjust=0)) +
-        theme(strip.text = element_text(face = "italic"))
-
-
-```
-
 ```{r echo=FALSE}
 # Create sparse data struct for modeling
-sparse_data = tidy_data %>% 
-  filter(n > 20) %>% 
-  arrange(desc(n))
-
-sparse_data = sparse_data %>% 
+sparse_data = data %>% 
+  filter(!stop_word, high_prevance) %>% 
+  count(ref, token) %>% 
   tidytext::cast_sparse(data = ., row = ref, column = token, value = n)
 ```
 
@@ -295,7 +206,7 @@ sparse_data = sparse_data %>%
 # Model many models, wide k-interval
 future::plan("multisession")
 set.seed(123)
-many_models = data_frame(K = seq(from = 10, to = 50, by = 5)) %>%
+many_models = data_frame(K = seq(from = 10, to = 80, by = 10)) %>%
   mutate(topic_model = furrr::future_map(K, ~stm::stm(sparse_data, K = .,
                                           verbose = FALSE),
                                          .options = furrr::furrr_options(seed = TRUE), 
@@ -328,18 +239,19 @@ k_result %>%
             `Held-out likelihood` = map_dbl(eval_heldout, "expected.heldout")) %>%
   gather(Metric, Value, -K) %>%
   ggplot(aes(K, Value, color = Metric)) +
-  geom_line(size = 1.5, alpha = 0.7, show.legend = FALSE) +
+  geom_line(size = 1, alpha = 0.7, show.legend = FALSE) +
+  geom_point(size = 1.5, alpha = 0.7, show.legend = FALSE) +
   facet_wrap(~Metric, scales = "free_y") +
   labs(x = "K (number of topics)",
        y = NULL,
        title = "Model diagnostics by number of topics")
 ```
 
-```{r echo=FALSE}
+```{r eval=FALSE, include=FALSE}
 # Model many models, narrow k-interval
 future::plan("multisession")
 set.seed(123)
-many_models = data_frame(K = seq(from = 10, to = 30, by = 2)) %>%
+many_models = data_frame(K = seq(from = 15, to = 25, by = 5)) %>%
   mutate(topic_model = furrr::future_map(K, ~stm::stm(sparse_data, K = .,
                                           verbose = TRUE),
                                          .options = furrr::furrr_options(seed = TRUE), 
@@ -347,7 +259,7 @@ many_models = data_frame(K = seq(from = 10, to = 30, by = 2)) %>%
          )
 ```
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 # Calculate performance metrics
 heldout = stm::make.heldout(sparse_data)
 k_result = many_models %>%
@@ -378,21 +290,11 @@ k_result %>%
        y = NULL,
        title = "Model diagnostics by number of topics")
 ```
-```{r}
-# K-selection
-# temp = stm::selectModel() # TODO automate and optimize
 
-.k_select = 16 # TEMP manual selection
-topic_model = stm::stm(documents = sparse_data, K = .k_select, 
-                       verbose = FALSE)
-
-rm(.k_select)
-
-# Summarize topic model
-summary(topic_model)
-```
 
 ```{r}
+topic_model = many_models$topic_model[[2]] # TODO SAVE
+
 theta = as_tibble(topic_model$theta)
 names(theta) = paste0("topic_",seq(ncol(theta)))
 theta$document = rownames(sparse_data)
@@ -402,10 +304,18 @@ main_topic = theta %>%
   pivot_longer(data = ., cols = contains("topic"), 
                names_to = "topic_id", values_to = "theta") %>% 
   group_by(document) %>% 
-  slice_max(.data = ., order_by = theta, n =  1)
+  slice_max(.data = ., order_by = theta, n =  1) %>% 
+  left_join(x = .,
+            y = select(.data = titles, ref, title),
+            by = c("document" = "ref")) %>% 
+  mutate(topic_id = factor(topic_id))
 ```
 
 ```{r}
-save(list = c("titles", "transcripts", ""))
+save(list = c("titles",  "transcripts",
+              "many_models",
+              "punct_summary", "data"), 
+     file = "./prepd-data/topic-model-data.RData"
+     )
 ```
 
