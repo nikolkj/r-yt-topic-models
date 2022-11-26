@@ -22,22 +22,153 @@ titles %>%
   kable(caption = "Preview: Title Dataset") %>% 
   kable_paper()
 ```
+|- raw text 
+|- remove new-line return symbols
+|-- "\n" only
+|- HTML special character normalization
+|-- "&#39;" "&quot;" "&amp;" "&gt;" "&lt;"
+|- Remove non-speach
+|-- "[...]" "<...>"
+|- flag transcript text with sentence-punctuation
+|-- classification 
+|- tokenize
+|- index tokens
+|- clean tokens
+|- flag stopwords
+|- stem tokens
+
+```{r}
+transcripts = transcripts %>% 
+  # remove new-line markers
+  mutate(text = str_replace_all(text, fixed("\n"), " ")) %>%
+  # fix HTML characters
+  mutate(text = str_replace_all(text, fixed("&#39;"), "'"),
+         text = str_replace_all(text, fixed("&quot;"), "\""),
+         text = str_replace_all(text, "&(amp;)+", " and "),
+         text = str_replace_all(text, fixed("&gt"), ">"),
+         text = str_replace_all(text, fixed("&lt;"), "<")) %>% 
+  # remove inaudible
+  mutate(text = str_replace_all(text, "\\[.*?\\]", " "),
+         text = str_replace_all(text, "<.*?>", " ")
+         ) %>% 
+  mutate(sent_punct = str_detect(text, "[\\.\\?\\!]")) %>% 
+  # remove empty transcript lines 
+  mutate(text = trimws(text)) %>% 
+  filter(text != "")
+
+# some example out 
+transcripts%>%
+  filter(row_number() %in% c(224171,10970,35125,657437,345125,233379))
+```
+
+```{r}
+# analyze sentence punctuation 
+punct_summary = transcripts %>% 
+  group_by(ref) %>% 
+  summarise(dur = max(start, na.rm = TRUE) - min(start, na.rm = TRUE),
+            puncts = sum(sent_punct)
+            )
+```
+
+```{r warning=FALSE}
+punct_summary %>% 
+  ggplot(., aes(dur, puncts, color = puncts)) + 
+  geom_density2d_filled(alpha = 0.2) +
+  geom_point() + 
+  scale_y_log10(labels = scales::number_format()) +
+  scale_x_log10(labels = scales::number_format()) +
+  geom_hline(yintercept = c(60,100), linetype = 2) + 
+  labs(title = "Identifying Well Punctuated Transcripts",
+       subtitle = "Good cut-off looks like its between 60 and 100 punctuated lines per video.",
+       x = "Duration (s)", 
+       y = "Punctuated Lines") + 
+  theme(legend.position = "none")
+```
+```{r warning=FALSE}
+clust = punct_summary %>%
+  ungroup() %>%
+  mutate(dur = dur + 1, 
+          puncts = puncts + 1) %>% 
+  select(dur, puncts) %>% 
+  mutate_all(.tbl = ., .funs = log10) %>% 
+  fpc::dbscan(data = ., eps = 0.65, MinPts = 200)
+  
+punct_summary %>% 
+  mutate(k = factor(clust$cluster)) %>% 
+  ggplot(., aes(dur, puncts)) + 
+  geom_density2d_filled(alpha = 0.2) +
+  geom_point(aes(color = k)) +
+  scale_y_log10(labels = scales::number_format()) +
+  # scale_x_log10(labels = scales::number_format()) +
+  geom_hline(yintercept = c(30,100), linetype = 2) + 
+  labs(title = "Identifying Well Punctuated Transcripts",
+       subtitle = paste("Alternatively, dbscan can be used to segement populations.",
+                        "Focusing on the 30 to 100 punctuated lines per video range.",
+                        sep = "\n"),
+       x = "Duration (s)", 
+       y = "Punctuated Lines") +
+  theme(legend.position = "none")
+
+```
+```{r}
+# Which cluster is well punctuated, top cluster. 
+clust.which =  punct_summary %>% 
+  mutate(k = clust$cluster) %>% 
+  group_by(k) %>% 
+  summarise(dur_mean = mean(dur),
+            punct_mean = mean(puncts)) %>% 
+  arrange(-punct_mean)
+
+clust.which
+```
+
+```{r}
+# Classify well punctuated based on dbscan and hard-cut off @ 30 punct'd lines
+punct_summary = punct_summary %>% 
+  mutate(k = clust$cluster) %>% 
+  mutate(.punctd = (puncts >= 30 & k == clust.which$k[1])) %>% 
+  select(everything(), .punctd)
+
+punct_summary %>% count(.punctd)
+```
+
+Since the minority of transcripts are well punctuated, we will keep all transcripts in the corpus; however, downstream snippet creation will only be available for those. 
+
+```{r}
+data = transcripts %>% 
+  select(ref, text) %>% 
+  ## do not use, need to preserve punctuation 
+  # tidytext::unnest_tokens(tbl = ., output = "word", to_lower = FALSE, input = text, token = "words") %>%
+  mutate(word = str_split(text, "//s+"))
+
+
+data
+```
+
+```{r}
+transcripts %>%
+  filter(ref == "-2enQV3Dfng")
+```
+
+
 ```{r}
 # clean-up text transacripts
 transcripts = transcripts %>%
   mutate() %>% # e.g. "[music]"
   mutate(
-      text = str_replace_all(text, "\\[[^>]*]", " "),
-      text = str_replace_all(string = text, pattern = "&#\\d+;", " "),
-      text = str_replace_all(string = text, pattern = "&gt;|&lt;|&amp;", " "),
-      text = str_replace_all(string = text, pattern = "<[^>]*>", " "),
-      text = str_replace_all(string = text, pattern = "(\\n)|(\\r)", " "),
-      text = str_replace_all(string = text, pattern = "[[:punct:]]", " "),
-      text = str_squish(text)
+      clean_text = str_replace_all(text, "\\[[^>]*]", " "),
+      clean_text = str_replace_all(string = text, pattern = "&#\\d+;", " "),
+      clean_text = str_replace_all(string = text, pattern = "&gt;|&lt;|&amp;", " "),
+      clean_text = str_replace_all(string = text, pattern = "<[^>]*>", " "),
+      clean_text = str_replace_all(string = text, pattern = "(\\n)|(\\r)", " "),
+      clean_text = str_replace_all(string = text, pattern = "[[:punct:]]", " "),
+      clean_text = str_squish(text)
   ) %>% 
-  filter(text != "")
+  filter(clean_text != "")
 
 ```
+
+
 
 ```{r echo=FALSE}
 transcripts %>% 
