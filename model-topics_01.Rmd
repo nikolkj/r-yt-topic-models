@@ -1,0 +1,280 @@
+---
+title: "YouTubeR Topic Modeling"
+output: html_notebook
+---
+
+```{r warning=FALSE}
+suppressPackageStartupMessages(require(tidyverse))
+suppressPackageStartupMessages(require(magrittr))
+suppressPackageStartupMessages(require(knitr))
+suppressPackageStartupMessages(require(kableExtra))
+"%nin%" = Negate("%in%")
+```
+
+```{r}
+titles = read_rds(file = "./prepd-data/yt_titles-and-links.rds")
+transcripts = read_rds(file = "./prepd-data/yt_transcripts.rds")
+```
+
+```{r echo=FALSE}
+titles %>% 
+  sample_n(10) %>% 
+  kable(caption = "Preview: Title Dataset") %>% 
+  kable_paper()
+```
+```{r}
+# clean-up text transacripts
+transcripts = transcripts %>%
+  mutate() %>% # e.g. "[music]"
+  mutate(
+      text = str_replace_all(text, "\\[[^>]*]", " "),
+      text = str_replace_all(string = text, pattern = "&#\\d+;", " "),
+      text = str_replace_all(string = text, pattern = "&gt;|&lt;|&amp;", " "),
+      text = str_replace_all(string = text, pattern = "<[^>]*>", " "),
+      text = str_replace_all(string = text, pattern = "(\\n)|(\\r)", " "),
+      text = str_replace_all(string = text, pattern = "[[:punct:]]", " "),
+      text = str_squish(text)
+  ) %>% 
+  filter(text != "")
+
+```
+
+```{r echo=FALSE}
+transcripts %>% 
+  sample_n(10) %>% 
+  kable(caption = "Preview: Transcripts Dataset") %>% 
+  kable_paper()
+```
+```{r}
+# Collapse 1-to-1 reference to text 
+data = transcripts %>% 
+  select(ref, text) %>% 
+  group_by(ref) %>% 
+  summarise(text = paste(text, collapse = " "), .groups = "drop") %>% 
+  mutate(text = tolower(text))
+
+# Remove short transcripts
+data = data %>% 
+  mutate(words = str_count(string = text, pattern = " "))
+
+data %>% 
+  select(ref, words) %>% 
+  ggplot(data = ., aes(words)) + 
+  stat_ecdf() +
+  geom_vline(xintercept = 2500)
+```
+
+```{r}
+# Remove short transcripts
+data = data %>% 
+  filter(words > 2500) %>%
+  select(-words)
+```
+
+
+```{r}
+tidy_data = data %>% 
+  # tidytext::unnest_ngrams(tbl = ., output = token, input = text, n = 2) %>% 
+  tidytext::unnest_tokens(output = word, input = text) %>%
+  filter(nchar(word) > 2) %>% 
+  filter(!str_detect(word, "\\d")) %>% 
+  filter(word %nin% filter(tidytext::stop_words, lexicon == "snowball")$word) %>%  
+  mutate(token = SnowballC::wordStem(words = word, language = "english"))
+```
+
+```{r}
+# Record stems for reverse mapping downstream
+word_stems = tidy_data %>% 
+  count(token, word)
+
+# preview common stems 
+word_stems %>% 
+  count(token, sort = T) %>% 
+  head()
+
+```
+
+```{r}
+tidy_data = tidy_data %>% 
+  count(ref,token) 
+```
+
+
+```{r}
+tidy_data %>% 
+  filter(n > 5) %>% 
+  sample_n(10) %>% 
+  kable(x = ., caption = "Preview: Tidy Data") %>% 
+  kable_paper()
+```
+
+```{r}
+tidy_tfidf = tidy_data %>% 
+  tidytext::bind_tf_idf(tbl = ., term = token, document = ref, n = n)
+```
+
+```{r warning=FALSE}
+.temp = tidy_tfidf %>% 
+  group_by(ref) %>% 
+  slice_max(.data = ., order_by = tf_idf) %>% 
+  summarise(sum_tf_idf = sum(tf_idf)) %>% 
+  arrange(desc(sum_tf_idf)) %>% 
+  left_join(x = ., y = select(.data = titles, ref, title),
+            by = "ref") %>% 
+  slice_max(.data = ., order_by = sum_tf_idf, n = 6)
+
+.temp2 = tidy_tfidf %>% 
+  filter(ref %in% .temp$ref) %>% 
+  # count(ref)
+  group_by(ref) %>% 
+  arrange(-tf_idf) %>% 
+  top_n(n = 10) %>% 
+  left_join(x = ., y = select(.data = titles, ref, title),
+            by = "ref")
+
+.temp2 %>% 
+  arrange(title, -tf_idf) %>% 
+  mutate(token = factor(token, levels = rev(unique(token)))) %>% 
+  ggplot(., aes(tf_idf, reorder(token, tf_idf), fill = title, alpha = tf_idf)) +
+        ggstance::geom_barh(stat = "identity", show.legend = FALSE) +
+        labs(title = "Highest tf-idf words in Unique YouTube Videos",
+             y = NULL, x = "tf-idf") +
+        facet_wrap(~title, ncol = 2, scales = "free") +
+        ggthemes::theme_tufte(base_family = "Arial", base_size = 13, ticks = FALSE) +
+        scale_alpha_continuous(range = c(0.6, 1)) +
+        scale_x_continuous(expand=c(0,0)) +
+        viridis::scale_fill_viridis(end = 0.85, discrete=TRUE) +
+        theme(strip.text=element_text(hjust=0)) +
+        theme(strip.text = element_text(face = "italic"))
+
+
+```
+
+```{r echo=FALSE}
+# Create sparse data struct for modeling
+sparse_data = tidy_data %>% 
+  filter(n > 20) %>% 
+  arrange(desc(n))
+
+sparse_data = sparse_data %>% 
+  tidytext::cast_sparse(data = ., row = ref, column = token, value = n)
+```
+
+```{r echo=FALSE}
+# Model many models, wide k-interval
+future::plan("multisession")
+set.seed(123)
+many_models = data_frame(K = seq(from = 10, to = 50, by = 5)) %>%
+  mutate(topic_model = furrr::future_map(K, ~stm::stm(sparse_data, K = .,
+                                          verbose = FALSE),
+                                         .options = furrr::furrr_options(seed = TRUE), 
+                                         .progress = TRUE)
+         )
+```
+
+```{r}
+# Calculate performance metrics
+heldout = stm::make.heldout(sparse_data)
+k_result = many_models %>%
+  mutate(exclusivity = map(topic_model, stm::exclusivity),
+         semantic_coherence = map(topic_model, stm::semanticCoherence, sparse_data),
+         eval_heldout = map(topic_model, stm::eval.heldout, heldout$missing),
+         residual = map(topic_model, stm::checkResiduals, sparse_data),
+         bound =  map_dbl(topic_model, function(x) max(x$convergence$bound)),
+         lfact = map_dbl(topic_model, function(x) lfactorial(x$settings$dim$K)),
+         lbound = bound + lfact,
+         iterations = map_dbl(topic_model, function(x) length(x$convergence$bound)))
+
+```
+
+```{r}
+# Plot performance metrics
+k_result %>%
+  transmute(K,
+            `Lower bound` = lbound,
+            Residuals = map_dbl(residual, "dispersion"),
+            `Semantic coherence` = map_dbl(semantic_coherence, mean),
+            `Held-out likelihood` = map_dbl(eval_heldout, "expected.heldout")) %>%
+  gather(Metric, Value, -K) %>%
+  ggplot(aes(K, Value, color = Metric)) +
+  geom_line(size = 1.5, alpha = 0.7, show.legend = FALSE) +
+  facet_wrap(~Metric, scales = "free_y") +
+  labs(x = "K (number of topics)",
+       y = NULL,
+       title = "Model diagnostics by number of topics")
+```
+
+```{r echo=FALSE}
+# Model many models, narrow k-interval
+future::plan("multisession")
+set.seed(123)
+many_models = data_frame(K = seq(from = 10, to = 30, by = 2)) %>%
+  mutate(topic_model = furrr::future_map(K, ~stm::stm(sparse_data, K = .,
+                                          verbose = TRUE),
+                                         .options = furrr::furrr_options(seed = TRUE), 
+                                         .progress = TRUE)
+         )
+```
+
+```{r}
+# Calculate performance metrics
+heldout = stm::make.heldout(sparse_data)
+k_result = many_models %>%
+  mutate(exclusivity = map(topic_model, stm::exclusivity),
+         semantic_coherence = map(topic_model, stm::semanticCoherence, sparse_data),
+         eval_heldout = map(topic_model, stm::eval.heldout, heldout$missing),
+         residual = map(topic_model, stm::checkResiduals, sparse_data),
+         bound =  map_dbl(topic_model, function(x) max(x$convergence$bound)),
+         lfact = map_dbl(topic_model, function(x) lfactorial(x$settings$dim$K)),
+         lbound = bound + lfact,
+         iterations = map_dbl(topic_model, function(x) length(x$convergence$bound)))
+
+```
+
+```{r}
+# Plot performance metrics
+k_result %>%
+  transmute(K,
+            `Lower bound` = lbound,
+            Residuals = map_dbl(residual, "dispersion"),
+            `Semantic coherence` = map_dbl(semantic_coherence, mean),
+            `Held-out likelihood` = map_dbl(eval_heldout, "expected.heldout")) %>%
+  gather(Metric, Value, -K) %>%
+  ggplot(aes(K, Value, color = Metric)) +
+  geom_line(size = 1.5, alpha = 0.7, show.legend = FALSE) +
+  facet_wrap(~Metric, scales = "free_y") +
+  labs(x = "K (number of topics)",
+       y = NULL,
+       title = "Model diagnostics by number of topics")
+```
+```{r}
+# K-selection
+# temp = stm::selectModel() # TODO automate and optimize
+
+.k_select = 16 # TEMP manual selection
+topic_model = stm::stm(documents = sparse_data, K = .k_select, 
+                       verbose = FALSE)
+
+rm(.k_select)
+
+# Summarize topic model
+summary(topic_model)
+```
+
+```{r}
+theta = as_tibble(topic_model$theta)
+names(theta) = paste0("topic_",seq(ncol(theta)))
+theta$document = rownames(sparse_data)
+theta = select(.data = theta, document, everything())
+
+main_topic = theta %>% 
+  pivot_longer(data = ., cols = contains("topic"), 
+               names_to = "topic_id", values_to = "theta") %>% 
+  group_by(document) %>% 
+  slice_max(.data = ., order_by = theta, n =  1)
+```
+
+```{r}
+save(list = c("titles", "transcripts", ""))
+```
+
