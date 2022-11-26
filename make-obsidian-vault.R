@@ -22,8 +22,7 @@ dir.create("./obsidian-vault/")
 
 # make main obsidian folders
 if(!dir.exists("./obsidian-vault/topics/")) dir.create("./obsidian-vault/topics/") # topics dir
-# if(!dir.exists("./obsidian-vault/frex-stems/")) dir.create("./obsidian-vault/frex-stems/") # frex-stems dir dynamic
-# if(!dir.exists("./obsidian-vault/lift-stems/")) dir.create("./obsidian-vault/lift-stems/") # frex-stems dir dynamic
+if(!dir.exists("./obsidian-vault/stems/")) dir.create("./obsidian-vault/stems/") # stems dir 
 if(!dir.exists("./obsidian-vault/transcripts/")) dir.create("./obsidian-vault/transcripts/") # transcripts dir
 if(!dir.exists("./obsidian-vault/snippets/")) dir.create("./obsidian-vault/snippets/") # snippets dir
 
@@ -88,59 +87,71 @@ for(i in seq_along(topic_ids)){
   
 }
 
-# Create Frex Stems Folder Contents ----
-stem_map = data %>% 
-  left_join(x = ., 
-            y = select(main_topic, document, topic_id), 
-            by = c("ref" = "document")
-            ) %>% 
-  mutate(temp = as.numeric(str_extract(topic_id, "\\d+$")),
-         temp = paste0(temp,token) %in% paste0(frex_words$K, frex_words$frex_word)) %>% 
-  filter(temp) %>% 
-  select(-temp)
+# Create Token Stem Folders ----
+# Each topic page contains: 
+#  - Topic Tag: "#topic_id" notation
+#  - Word-type Tag: "#type" notation
+#  - Aliases YAML: "aliases: [word1, word2, ...]" notation
+#   |- must be clean: no trailing punctuation, non-apostrophe characters, etc.
+#   |- derived from `data$word`
+#
+# Retained: 
+# - map of token to obsidian aliased-link mapping, "[[word1|word2|]]" notation
 
-pb = progress::progress_bar$new(total = length(topic_labels))
-topic_buds = vector(mode = "list", length = 0L)
-for(i in seq_along(topic_labels)){
-  .stems = stem_map %>% 
-    filter(topic_id == topic_labels[i]) %>% 
-    select(topic_id, token, word) %>% 
-    unique() 
+stems = topic_model.tokens %>% 
+  group_by(token) %>% 
+  nest() %>% 
+  ungroup()
+
+alias_maps = list()
+pb = progress::progress_bar$new(total = length(stems$token))
+for(i in seq_along(stems$token)){
   
-  .lab = as.character(unique(.stems$topic_id))
-  .tokens = unique(.stems$token)
+  .token = stems$token[i]
+  .topic_ids = unique(stems$data[[i]]$topic_id)
+  .word_types = unique(stems$data[[i]]$word_type)
   
-  for(j in seq_along(.tokens)){
-    .token = .tokens[j]
-    .topic_buds = .stems %>% 
-      filter(token == .token) %$%
-      word %>% 
-      str_remove_all(., "[\\.\\?\\!,]+$") %>% 
-      unique()
-    
-    .topic_buds = c(.topic_buds, tolower(.topic_buds), stringr::str_to_title(.topic_buds), toupper(.topic_buds))
-    .topic_buds = unique(.topic_buds)
-    
-    .topic_buds_list = list(.topic_buds)
-    names(.topic_buds_list) = .token
-    topic_buds = c(topic_buds, .topic_buds_list)
-    
-    .yaml_aliases = paste0(.topic_buds, collapse = ", ") %>%
-      paste0("aliases: [", ., "]") %>%
-      c("---",. , "---")
-    
-    .text_out = c(.yaml_aliases, # document yaml
-                  paste0("#", .lab) # topic tag
-                  )
-    
-    write_lines(x = .text_out, 
-                file = paste0("./obsidian-vault/frex-stems/", .token, ".md")
-                )
-    
-  }
+  aliases = data %>% 
+    filter(token == .token) %>% 
+    left_join(x = ., 
+              y = select(.data = transcript_topics, ref, topic_id),
+              by = "ref")
   
-  pb$tick()
+  if(TRUE) filter(.data = aliases, topic_id %in% .topic_ids) # optional, only keep words from associated docs
+  
+  # TODO this is SLOW; refactor
+  alias_map = aliases %>% 
+    select(token, word) %>% 
+    unique() %>% 
+    mutate(alias = str_remove_all(word, "[\\.\\?\\!,-]+$"), 
+           # variations 
+           alias = tolower(alias),
+           upper_alias = toupper(alias), 
+           title_alias = str_to_title(alias)
+           ) %>% 
+    pivot_longer(data = ., cols = contains("alias"), names_to = "alias_type", values_to = "alias")
+  
+  
+    .aliases = unique(alias_map$alias)
+    .yaml = paste0("aliases: [",paste(.aliases, collapse = ", "),"]") %>% 
+      c("---", ., "---")
+    .path = paste0("./obsidian-vault/stems/", .token, ".md")
+    
+    .content = c(.yaml, # YAML
+                 paste0("#",.word_types), # word type tags
+                 paste0("#", .topic_ids) # topic tags
+                 )
+    
+    # write to file
+    write_lines(x = .content, 
+                file = .path)
+    
+    # archive alias map
+    alias_maps = c(alias_maps, list(alias_map))
+    
+    pb$tick()
 }
+
 
 # Create Transcripts Folder Contents: Punctuated Documents ----
 documents_ids = filter(.data = punct_summary, .punctd)
