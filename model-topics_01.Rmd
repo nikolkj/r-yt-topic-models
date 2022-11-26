@@ -314,7 +314,7 @@ main_topic = theta %>%
 ```{r}
 save(list = c("titles",  "transcripts",
               "many_models",
-              "punct_summary", "data"), 
+              "punct_summary", "data", "sparse_data"), 
      file = "./prepd-data/topic-model-data.RData"
      )
 ```
