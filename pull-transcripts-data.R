@@ -27,7 +27,7 @@ silge_links = temp %>%
   html_attr("href")
 
 silge_data = tibble(title = silge_titles, 
-                     url = silge_links)
+                    url = silge_links)
 
 silge_data = filter(.data = silge_data, !is.na(url))
 # silge_data = silge_data[-c(1:which(is.na(silge_data$url))[1]),] # not necessary here
@@ -42,7 +42,7 @@ temp = lander_contents %>%
 
 lander_titles = temp %>% 
   html_text2()
-  
+
 lander_links = temp %>% 
   html_attr("href")
 
@@ -65,7 +65,7 @@ posit_links = temp %>%
   html_attr("href")
 
 posit_data = tibble(title = posit_titles, 
-                     url = posit_links)
+                    url = posit_links)
 
 posit_data = posit_data[-c(1:which(is.na(posit_data$url))[1]),] # remove suggested videos block
 posit_data$channel = "@PositPBC"
@@ -106,7 +106,7 @@ for(i in seq_along(data$url)){
     pb$tick()
     closeAllConnections()
     next
-    } 
+  } 
   
   
   .temp = httr::content(x = .temp, as = "text") # read video page as HTML teext
@@ -115,7 +115,7 @@ for(i in seq_along(data$url)){
     str_extract(., '"baseUrl":"https://www.youtube.com/api/timedtext[^"]*lang=en') %>%
     str_remove(string = ., ".*baseUrl.*://") %>% 
     str_replace_all(string = ., pattern = "\\\\u0026", replacement = "&")
-     
+  
   if(any(is.na(.temp))){
     # no TimedText API url
     pb$tick()
@@ -139,13 +139,13 @@ for(i in seq_along(data$url)){
     # grab text
     html_nodes("text") %>% 
     html_text() 
-    # clean-up HTML characters, eg. &#39; 
-    # ... leave to data analysis portion, reference code below.
-    # str_remove_all(string = ., pattern = "&#\\d+;", " ") %>% 
-    # str_remove_all(string = ., pattern = "&gt;|&lt;|&amp;", " ") %>%
-    # str_remove_all(string = ., pattern = "<[^>]*>", " ") %>%
-    # str_remove_all(string = ., pattern = "<[^>]*>", " ") %>%
-    # str_replace_all(string = ., pattern = "\\n", " ")
+  # clean-up HTML characters, eg. &#39; 
+  # ... leave to data analysis portion, reference code below.
+  # str_remove_all(string = ., pattern = "&#\\d+;", " ") %>% 
+  # str_remove_all(string = ., pattern = "&gt;|&lt;|&amp;", " ") %>%
+  # str_remove_all(string = ., pattern = "<[^>]*>", " ") %>%
+  # str_remove_all(string = ., pattern = "<[^>]*>", " ") %>%
+  # str_replace_all(string = ., pattern = "\\n", " ")
   
   .data = .temp %>% 
     # grab time-stamps
@@ -156,7 +156,7 @@ for(i in seq_along(data$url)){
     mutate_all(.tbl = ., .funs = as.numeric) %>% 
     # add in text response
     mutate(text = .text)
-    
+  
   write_rds(x = .data, file = paste0("./prepd-data/transcripts/", .title, ".rds"))
   transcripts[[i]] = .data
   
