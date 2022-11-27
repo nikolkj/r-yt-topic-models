@@ -26,6 +26,8 @@ if(!dir.exists("./obsidian-vault/stems/")) dir.create("./obsidian-vault/stems/")
 if(!dir.exists("./obsidian-vault/transcripts/")) dir.create("./obsidian-vault/transcripts/") # transcripts dir
 if(!dir.exists("./obsidian-vault/snippets/")) dir.create("./obsidian-vault/snippets/") # snippets dir
 
+readline(prompt = "Ready?")
+
 # Map Document Transcript Topics ----
 theta = as_tibble(topic_model$theta)
 names(theta) = paste0("topic_",str_pad(seq(ncol(theta)), width = 2, side = "left", pad = "0"))
@@ -155,15 +157,156 @@ for(i in seq_along(stems$token)){
 
 # Create Transcripts Folder Contents: Punctuated Documents ----
 documents_ids = filter(.data = punct_summary, .punctd)
-for(j in seq_along(documents_ids)){
+pb = progress::progress_bar$new(total = nrow(documents_ids))
+for(i in seq_along(documents_ids$ref)){
+  
+  .ref = documents_ids$ref[i]
+  
+  # transcript meta data
+  .title = titles$title[which(titles$ref == .ref)] 
+  .md_title = .title %>% 
+    str_replace_all(string = ., '[\\*"\\\\/<>:|\\?]+', "~")
+    assertthat::assert_that(length(.title) == 1L)
+    assertthat::assert_that((!grepl('[*"\\/<>:|]', .md_title))) # obsidian doc title char restricts
+
+  .channel = titles$channel[which(titles$ref == .ref)]  
+    assertthat::assert_that(length(.channel) == 1L)
+    
+  .link = titles$url[which(titles$ref == .ref)]  
+    assertthat::assert_that(length(.link) == 1L)
+    
+  .topic_id = transcript_topics$topic_id[which(transcript_topics$ref == .ref)]
+    assertthat::assert_that(length(.topic_id) == 1L)
+  
+  # transcript contents
+  .data = filter(.data = data, ref == .ref) %>%
+    mutate(punct = str_extract(word, "[[:punct:]]+$")) %>% 
+    # # ignores topic relationship
+    # mutate(model_token = token %in% topic_model.tokens$token) %>% 
+    # respects topic relationship
+    mutate(model_token = token %in% filter(.data = topic_model.tokens, topic_id == .topic_id)$token) %>% 
+    mutate(tagged_word = ifelse(test = model_token, 
+                                yes = paste0("[[", token, "|", 
+                                             str_remove(word, "[[:punct:]]+$"),
+                                             "]]", ifelse(!is.na(punct), punct, "")), 
+                                no = word)
+           )
+  
+  .transcript = paste(.data$tagged_word, collapse = " ") 
+  .transcript_eos = as_tibble(str_locate_all(.transcript, "[\\.\\?!]+\\s+")[[1]])
+  .transcript_eos$sentence_start = lag(.transcript_eos$end, n = 1)
+  .transcript_eos$sentence_start[1] = 1
+  .transcript_eos$sentence_end = .transcript_eos$end -1
+  .transcript_eos = select(.data = .transcript_eos, contains("sentence"))
+  .transcript = apply(.transcript_eos, 1, function(x){str_sub(.transcript, x[[1]], x[[2]])}) %>% 
+    trimws()
   
   
+  # write to file
+  .page_title = paste("#", .title)
+  .tags = paste(paste0("[[", .channel, "]]"),
+                paste0("#", .topic_id)
+                )
+  
+  .link = paste0("https://www.youtube.com", .link) %>% 
+    paste0("[Watch on YouTube](", ., ")")
+  
+  .content = .transcript
+  
+  .path = paste0("./obsidian-vault/transcripts/", .md_title, ".md")
+  
+  write_lines(x = c(.page_title,
+                    .tags,
+                    .link,
+                    .content),
+              
+              file = .path, 
+              sep = "\n\n")
+  
+  pb$tick()
   
   
 }
 
 # Create Transcripts Folder Contents: Non-Punctuated Documents ----
 documents_ids = filter(.data = punct_summary, !.punctd)
+pb = progress::progress_bar$new(total = nrow(documents_ids))
+for(i in seq_along(documents_ids$ref)){
+  
+  .ref = documents_ids$ref[i]
+  
+  # transcript meta data
+  .title = titles$title[which(titles$ref == .ref)] 
+  .md_title = .title %>% 
+    str_replace_all(string = ., '[\\*"\\\\/<>:|\\?]+', "~")
+  assertthat::assert_that(length(.title) == 1L)
+  assertthat::assert_that((!grepl('[*"\\/<>:|]', .md_title))) # obsidian doc title char restricts
+  
+  .channel = titles$channel[which(titles$ref == .ref)]  
+  assertthat::assert_that(length(.channel) == 1L)
+  
+  .link = titles$url[which(titles$ref == .ref)]  
+  assertthat::assert_that(length(.link) == 1L)
+  
+  .topic_id = transcript_topics$topic_id[which(transcript_topics$ref == .ref)]
+  assertthat::assert_that(length(.topic_id) == 1L)
+  
+  # transcript contents
+  .data = filter(.data = data, ref == .ref) %>%
+    mutate(punct = str_extract(word, "[[:punct:]]+$")) %>% 
+    # # ignores topic relationship
+    # mutate(model_token = token %in% topic_model.tokens$token) %>% 
+    # respects topic relationship
+    mutate(model_token = token %in% filter(.data = topic_model.tokens, topic_id == .topic_id)$token) %>% 
+    mutate(tagged_word = ifelse(test = model_token, 
+                                yes = paste0("[[", token, "|", 
+                                             str_remove(word, "[[:punct:]]+$"),
+                                             "]]", ifelse(!is.na(punct), punct, "")), 
+                                no = word)
+    )
+  
+  .transcript_order = transcripts %>% 
+    filter(ref == .ref) %>% 
+    select(text) %>% 
+    mutate(tokens = str_count(string = text, pattern = "\\s+") + 1) %>%
+    mutate(token_end = cumsum(tokens), 
+           token_start = token_end - tokens + 1) %>% 
+    select(token_start, token_end)
+  
+  .transcript = apply(.transcript_order, 1, function(x){
+    # TODO very slow, refactor
+    .data %>%
+      select(word_index, tagged_word) %>% 
+      filter(word_index >= x[[1]] & word_index <= x[[2]]) %$% 
+      tagged_word %>% 
+      paste(., collapse = " ")
+  })
+  
+  # write to file
+  .page_title = paste("#", .title)
+  .tags = paste(paste0("[[", .channel, "]]"),
+                paste0("#", .topic_id)
+  )
+  
+  .link = paste0("https://www.youtube.com", .link) %>% 
+    paste0("[Watch on YouTube](", ., ")")
+  
+  .content = .transcript
+  
+  .path = paste0("./obsidian-vault/transcripts/", .md_title, ".md")
+  
+  write_lines(x = c(.page_title,
+                    .tags,
+                    .link,
+                    .content),
+              
+              file = .path, 
+              sep = "\n\n")
+  
+  pb$tick()
+  
+  
+}
 
 # Create Snippets Folder Contents ----
 
