@@ -17,14 +17,14 @@ topic_model = many_models$topic_model[[which(many_models$K == param.k_select)]]
 
 # Make Obsidian Folders ----
 # make directories
-if(dir.exists("./obsidian-vault/")) unlink("./obsidian-vault/", recursive = TRUE) 
-dir.create("./obsidian-vault/")
+dir_base = paste0("./obsidian-value-", param.k_select, "/")
+if(dir.exists(dir_base)) unlink(dir_base, recursive = TRUE) 
+dir.create(dir_base)
 
 # make main obsidian folders
-if(!dir.exists("./obsidian-vault/topics/")) dir.create("./obsidian-vault/topics/") # topics dir
-if(!dir.exists("./obsidian-vault/stems/")) dir.create("./obsidian-vault/stems/") # stems dir 
-if(!dir.exists("./obsidian-vault/transcripts/")) dir.create("./obsidian-vault/transcripts/") # transcripts dir
-if(!dir.exists("./obsidian-vault/snippets/")) dir.create("./obsidian-vault/snippets/") # snippets dir
+if(!dir.exists(paste0(dir_base,"topics/"))) dir.create(paste0(dir_base,"topics/")) # topics dir
+if(!dir.exists(paste0(dir_base,"stems/"))) dir.create(paste0(dir_base,"stems/")) # stems dir 
+if(!dir.exists(paste0(dir_base,"transcripts/"))) dir.create(paste0(dir_base,"transcripts/")) # transcripts dir
 
 readline(prompt = "Ready?")
 
@@ -75,7 +75,7 @@ for(i in seq_along(topic_ids)){
     token %>% 
     paste0("[[", ., "]]")
   
-  .path = paste0("./obsidian-vault/topics/", .id, ".md")
+  .path = paste0(paste0(dir_base,"topics/"), .id, ".md")
   
   .content = c(.title, 
                .tag, 
@@ -137,11 +137,11 @@ for(i in seq_along(stems$token)){
     .aliases = unique(alias_map$alias)
     .yaml = paste0("aliases: [",paste(.aliases, collapse = ", "),"]") %>% 
       c("---", ., "---")
-    .path = paste0("./obsidian-vault/stems/", .token, ".md")
+    .path = paste0(paste0(dir_base,"stems/"), .token, ".md")
     
     .content = c(.yaml, # YAML
                  paste0("#",.word_types), # word type tags
-                 paste0("#", .topic_ids) # topic tags
+                 paste0("[[", .topic_ids, "]]") # topic tags
                  )
     
     # write to file
@@ -204,7 +204,7 @@ for(i in seq_along(documents_ids$ref)){
   # write to file
   .page_title = paste("#", .title)
   .tags = paste(paste0("[[", .channel, "]]"),
-                paste0("#", .topic_id)
+                paste0("[[", .topic_id, "]]")
                 )
   
   .link = paste0("https://www.youtube.com", .link) %>% 
@@ -212,7 +212,7 @@ for(i in seq_along(documents_ids$ref)){
   
   .content = .transcript
   
-  .path = paste0("./obsidian-vault/transcripts/", .md_title, ".md")
+  .path = paste0(paste0(dir_base,"transcripts/"), .md_title, ".md")
   
   write_lines(x = c(.page_title,
                     .tags,
@@ -283,7 +283,7 @@ for(i in seq_along(documents_ids$ref)){
   # write to file
   .page_title = paste("#", .title)
   .tags = paste(paste0("[[", .channel, "]]"),
-                paste0("#", .topic_id)
+                paste0("[[", .topic_id, "]]")
   )
   
   .link = paste0("https://www.youtube.com", .link) %>% 
@@ -291,7 +291,7 @@ for(i in seq_along(documents_ids$ref)){
   
   .content = .transcript
   
-  .path = paste0("./obsidian-vault/transcripts/", .md_title, ".md")
+  .path = paste0(paste0(dir_base,"transcripts/"), .md_title, ".md")
   
   write_lines(x = c(.page_title,
                     .tags,
@@ -306,9 +306,17 @@ for(i in seq_along(documents_ids$ref)){
   
 }
 
-# Create Snippets Folder Contents ----
+# Zip obsidian contents
+archive_path = paste0("./prepd-data/", basename(dir_base), ".zip")
+if(file.exists(archive_path)) file.remove(archive_path)
 
-
-
-
-
+zip(
+  zipfile = paste0("./prepd-data", basename(dir_base), ".zip"),
+  files = dir(
+    path = dir_base,
+    recursive = TRUE,
+    full.names = TRUE,
+    all.files = TRUE,
+    include.dirs = TRUE
+  )
+)
