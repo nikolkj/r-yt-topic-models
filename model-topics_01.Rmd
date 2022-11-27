@@ -13,7 +13,10 @@ suppressPackageStartupMessages(require(kableExtra))
 
 ```{r}
 titles = read_rds(file = "./prepd-data/yt_titles-and-links.rds")
+titles = unique(titles)
+
 transcripts = read_rds(file = "./prepd-data/yt_transcripts.rds")
+transcripts = unique(transcripts)
 ```
 
 ```{r echo=FALSE}
@@ -293,7 +296,7 @@ k_result %>%
 
 
 ```{r}
-topic_model = many_models$topic_model[[2]] # TODO SAVE
+topic_model = many_models$topic_model[[2]] 
 
 theta = as_tibble(topic_model$theta)
 names(theta) = paste0("topic_",seq(ncol(theta)))
