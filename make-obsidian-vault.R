@@ -159,7 +159,6 @@ for(i in seq_along(stems$token)){
 documents_ids = filter(.data = punct_summary, .punctd)
 pb = progress::progress_bar$new(total = nrow(documents_ids))
 for(i in seq_along(documents_ids$ref)){
-  
   .ref = documents_ids$ref[i]
   
   # transcript meta data
@@ -273,13 +272,12 @@ for(i in seq_along(documents_ids$ref)){
            token_start = token_end - tokens + 1) %>% 
     select(token_start, token_end)
   
-  .transcript = apply(.transcript_order, 1, function(x){
-    # TODO very slow, refactor
-    .data %>%
-      select(word_index, tagged_word) %>% 
-      filter(word_index >= x[[1]] & word_index <= x[[2]]) %$% 
-      tagged_word %>% 
-      paste(., collapse = " ")
+  .token_start = .transcript_order$token_start
+  .token_end = .transcript_order$token_end
+  .blocks = seq_along(.token_start)
+  
+  .transcript = sapply(.blocks, function(i){
+    paste(.data$tagged_word[.token_start[i]:.token_end[i]], collapse = " ")
   })
   
   # write to file
