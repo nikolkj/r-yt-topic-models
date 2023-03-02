@@ -17,7 +17,7 @@ topic_model = many_models$topic_model[[which(many_models$K == param.k_select)]]
 
 # Make Obsidian Folders ----
 # make directories
-dir_base = paste0("./obsidian-value-", param.k_select, "/")
+dir_base = paste0("./obsidian_topics-", param.k_select, "/")
 if(dir.exists(dir_base)) unlink(dir_base, recursive = TRUE) 
 dir.create(dir_base)
 
@@ -67,7 +67,7 @@ pb = progress::progress_bar$new(total = length(topic_ids))
 for(i in seq_along(topic_ids)){
   .id = topic_ids[i]
 
-  .title = .id
+  .yaml = c("---", paste0("aliases: [", .id, "]"), "---") # self-alias yaml
   .tag = paste0("#", .id)
   
   .tokens = topic_model.tokens %>% 
@@ -77,7 +77,7 @@ for(i in seq_along(topic_ids)){
   
   .path = paste0(paste0(dir_base,"topics/"), .id, ".md")
   
-  .content = c(.title, 
+  .content = c(.yaml, 
                .tag, 
                .tokens
                )
